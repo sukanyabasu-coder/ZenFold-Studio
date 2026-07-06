@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZenFold Studio | Production Release</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+
+    <style>
+        :root {
+            --primary: #2d3436;
+            --accent: #e17055;
+            --bg: #fdfbf7;
+            --glass: rgba(255, 255, 255, 0.95);
+        }
+
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: var(--bg);
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            color: var(--primary);
+            user-select: none;
+        }
+
+        #cursor {
+            position: fixed;
+            top: 0; left: 0;
+            width: 40px; height: 40px;
+            border: 2px solid var(--primary);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 9999;
+            transition: width 0.15s, height 0.15s, border-color 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        }
+        #cursor.pinching {
+            background: rgba(225, 112, 85, 0.2);
+            border-color: var(--accent);
+            transform: translate(-50%, -50%) scale(0.8);
+        }
+        #cursor::after {
+            content: '';
+            width: 8px; height: 8px;
+            background: var(--primary);
+            border-radius: 50%;
+            transition: background 0.2s;
+        }
+        #cursor.pinching::after { background: var(--accent); }
+
+        .screen {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            transition: opacity 0.5s;
+        }
+        .hidden { opacity: 0; pointer-events: none; display: none; }
+
+        #landing-screen {
+            display: flex; flex-direction: column; align-items: center;
+            justify-content: center; z-index: 10;
+            background: radial-gradient(circle at center, #fff 0%, #f0f0f0 100%);
+        }
+
+        h1 { font-size: 4.5rem; font-weight: 300; margin: 0 0 10px 0; letter-spacing: -2px; }
+        h1 span { font-weight: 700; color: var(--accent); }
+        .subtitle { font-size: 1.2rem; color: #636e72; margin-bottom: 50px; }
+
+        .shape-grid { display: flex; gap: 40px; margin-bottom: 60px; }
+        .shape-card {
+            width: 200px; height: 240px; background: white; border-radius: 24px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.05); display: flex;
+            flex-direction: column; align-items: center; justify-content: center;
+            cursor: pointer; transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            border: 3px solid transparent;
+        }
+        .shape-card:hover, .shape-card.selected {
+            transform: translateY(-15px); box-shadow: 0 25px 50px rgba(0,0,0,0.1);
+            border-color: var(--accent);
+        }
+        .shape-icon { font-size: 4.5rem; margin-bottom: 20px; }
+        .shape-name { font-weight: 700; font-size: 1.2rem; }
+
+        .start-btn {
+            padding: 18px 50px; background: #636e72; color: white;
+            font-size: 1.2rem; font-weight: 600; border: none;
+            border-radius: 50px; cursor: pointer; transition: all 0.3s;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+        }
+        .start-btn:hover { background: var(--primary); transform: translateY(-2px); }
+        .start-btn.active { background: var(--accent); }
+
+        #studio-screen { z-index: 5; }
+
+        #btn-home {
+            position: absolute; top: 40px; left: 40px; width: 50px; height: 50px;
+            border-radius: 50%; background: white; border: none;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1); font-size: 1.2rem;
+            cursor: pointer; z-index: 20; color: var(--primary);
+            display: flex; align-items: center; justify-content: center;
+            transition: transform 0.2s;
+        }
+        #btn-home:hover { transform: scale(1.1); background: var(--accent); color: white; }
+
+        .sidebar {
+            position: absolute; top: 50%; transform: translateY(-50%);
+            background: var(--glass); padding: 25px; border-radius: 24px;
+            backdrop-filter: blur(10px); box-shadow: 0 15px 40px rgba(0,0,0,0.05); z-index: 20;
+        }
+        .sidebar-left { left: 40px; width: 220px; top: 55%; }
+        .sidebar-right { right: 40px; width: 80px; display: flex; flex-direction: column; gap: 20px; align-items: center; }
+
+        .panel-title { font-size: 1.1rem; font-weight: 700; margin-bottom: 20px; margin-top:0; }
+        .gesture-item { display: flex; align-items: center; gap: 15px; margin-bottom: 20px; font-size: 0.95rem; color: #636e72; }
+        .gesture-icon { font-size: 1.8rem; width: 40px; text-align: center; }
+
+        .control-btn {
+            width: 60px; height: 60px; border-radius: 50%; border: none;
+            background: white; box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+            font-size: 1.5rem; cursor: pointer; transition: transform 0.2s, background 0.2s;
+            color: var(--primary);
+        }
+        .control-btn:hover { transform: scale(1.15); background: var(--accent); color: white; }
+
+        .bottom-bar {
+            position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%);
+            background: white; padding: 25px 50px; border-radius: 35px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.08); text-align: center; width: 500px; z-index: 20;
+        }
+        .step-indicator { 
+            font-size: 0.85rem; font-weight: 800; color: #b2bec3; 
+            letter-spacing: 3px; text-transform: uppercase; margin-bottom: 10px; transition: color 0.3s; 
+        }
+        .step-indicator.completed { color: #27ae60; font-size: 1rem; }
+        .instruction { font-size: 1.4rem; font-weight: 600; margin: 0; line-height: 1.3; color: var(--primary); }
+
+        #voice-log {
+            position: absolute; top: 40px; right: 40px; font-size: 1rem;
+            color: #b2bec3; font-style: italic; font-weight: 500; z-index: 20;
+        }
+
+        #video-feed {
+            position: absolute; bottom: 40px; right: 40px; width: 240px; height: 160px;
+            border-radius: 16px; object-fit: cover; transform: scaleX(-1);
+            box-shadow: 0 15px 35px rgba(0,0,0,0.15); border: 4px solid white; z-index: 10;
+            display: none; transition: border-color 0.2s ease, transform 0.2s ease; pointer-events: none;
+        }
+        #video-feed.pinching { border-color: var(--accent); transform: scaleX(-1) scale(1.02); }
+
+        #canvas-container { 
+            width: 100%; height: 100%; position: absolute; top:0; left:0; z-index: 1; 
+            transition: filter 0.5s ease;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="cursor"></div>
+    
+    <div id="landing-screen" class="screen">
+        <h1>ZenFold <span>Studio</span></h1>
+        <div class="subtitle">Select a shape to begin. Hover to focus, Pinch to select.</div>
+
+        <div class="shape-grid">
+            <div class="shape-card" id="card-crane" onclick="selectShape('crane')">
+                <div class="shape-icon">🦢</div>
+                <div class="shape-name">Peace Crane</div>
+            </div>
+            <div class="shape-card" id="card-boat" onclick="selectShape('boat')">
+                <div class="shape-icon">⛵</div>
+                <div class="shape-name">River Boat</div>
+            </div>
+            <div class="shape-card" id="card-fox" onclick="selectShape('fox')">
+                <div class="shape-icon">🦊</div>
+                <div class="shape-name">Desert Fox</div>
+            </div>
+        </div>
+
+        <button class="start-btn" id="btn-start">Allow Camera & Start</button>
+        <p id="error-msg" style="color:red; opacity:0; margin-top:10px;">Camera access denied.</p>
+    </div>
+
+    <div id="studio-screen" class="screen hidden">
+        <button id="btn-home" title="Back to Menu">⌂</button>
+        <div id="voice-log">Listening...</div>
+        <video id="video-feed" playsinline autoplay></video>
+
+        <div class="sidebar sidebar-left">
+            <h3 class="panel-title">Controls</h3>
+            <div class="gesture-item"><div class="gesture-icon">✋</div><div><b>Hover</b><br>Move Hand to Pan</div></div>
+            <div class="gesture-item"><div class="gesture-icon">◎</div><div><b>Target</b><br>Hover over the Dot</div></div>
+            <div class="gesture-item"><div class="gesture-icon">👌</div><div><b>Pinch/Click</b><br>Fold at Target</div></div>
+        </div>
+
+        <div class="sidebar sidebar-right">
+            <button class="control-btn" id="btn-prev">←</button>
+            <button class="control-btn" id="btn-next">→</button>
+            <button class="control-btn" id="btn-reset">↺</button>
+        </div>
+
+        <div class="bottom-bar">
+            <div class="step-indicator" id="step-count">STEP 1 OF 4</div>
+            <p class="instruction" id="instruction-text">Loading...</p>
+        </div>
+
+        <div id="canvas-container"></div>
+    </div>
+
+<script>
+/**
+ * ZENFOLD ENGINE V5 - Production Release
+ * Added explicit Audio Context unlocking and 3D Visual Rewards
+ */
+
+const CONFIG = { pinchThreshold: 0.08, lerpSpeed: 0.15, cameraZ: 6 };
+
+const State = {
+    screen: 'LANDING', selectedShape: null, currentStep: 0,
+    isPinching: false, handDetected: false, completed: false,
+    cursor: { x: window.innerWidth/2, y: window.innerHeight/2, nx: 0, ny: 0 }
+};
+
+const GEOMETRY_CACHE = {
+    square: new THREE.Shape().moveTo(-1,1).lineTo(1,1).lineTo(1,-1).lineTo(-1,-1).lineTo(-1,1),
+    triangle: new THREE.Shape().moveTo(-1,1).lineTo(1,-1).lineTo(-1,-1).lineTo(-1,1),
+    kite: new THREE.Shape().moveTo(0,1.2).lineTo(0.6,0).lineTo(0,-1.2).lineTo(-0.6,0).lineTo(0,1.2),
+    craneFinal: new THREE.Shape().moveTo(-0.8, 0.2).lineTo(0, -0.5).lineTo(0.8, 0.2).lineTo(0.9, 0.8).lineTo(1.1, 0.6).lineTo(0.7, 0.1).lineTo(0, 0.4).lineTo(-0.8, 0.2),
+    rect: new THREE.Shape().moveTo(-1.2, 0.8).lineTo(1.2, 0.8).lineTo(1.2, -0.8).lineTo(-1.2, -0.8).lineTo(-1.2, 0.8),
+    hat: new THREE.Shape().moveTo(-1,-0.5).lineTo(0,0.8).lineTo(1,-0.5).lineTo(-1,-0.5),
+    boatFinal: new THREE.Shape().moveTo(-1.2, 0).lineTo(1.2, 0).lineTo(0.8, -0.6).lineTo(-0.8, -0.6).lineTo(-1.2, 0).moveTo(0, 0).lineTo(0, 1.2).lineTo(0.8, 0.2).lineTo(0, 0),
+    diamond: new THREE.Shape().moveTo(0, 1.2).lineTo(1, 0).lineTo(0, -1.2).lineTo(-1, 0).lineTo(0, 1.2),
+    foxFold1: new THREE.Shape().moveTo(0, 1.2).lineTo(1, 0).lineTo(-1, 0).lineTo(0, 1.2),
+    foxFinal: new THREE.Shape().moveTo(0, -0.8).lineTo(0.6, 0.2).lineTo(0.9, 1.0).lineTo(0.4, 0.8).lineTo(0, 0.6).lineTo(-0.4, 0.8).lineTo(-0.9, 1.0).lineTo(-0.6, 0.2).lineTo(0, -0.8)
+};
+
+const ORIGAMI_DATA = {
+    crane: { color: 0xe17055, steps: [
+        { text: "Start with a square. Pinch center to fold.", shape: 'square', rot: 0.785, target: {x:0, y:0} },
+        { text: "Fold corners in. Pinch the top.", shape: 'triangle', rot: 0, target: {x:0, y:0.5} },
+        { text: "Fold edges. Pinch the side.", shape: 'kite', rot: 0, target: {x:0.3, y:0} },
+        { text: "Fold the neck. A Crane!", shape: 'craneFinal', rot: 0.2, target: null }
+    ]},
+    boat: { color: 0x0984e3, steps: [
+        { text: "Start with a rectangle. Pinch bottom.", shape: 'rect', rot: 0, target: {x:0, y:-0.5} },
+        { text: "Fold to hat. Pinch top.", shape: 'hat', rot: 0, target: {x:0, y:0.5} },
+        { text: "Flip over. Pinch center.", shape: 'hat', rot: 3.14, target: {x:0, y:0} }, 
+        { text: "Pull open. A Boat!", shape: 'boatFinal', rot: 0, target: null }
+    ]},
+    fox: { color: 0xd35400, steps: [
+        { text: "Start with a diamond. Pinch top.", shape: 'diamond', rot: 0, target: {x:0, y:0.8} },
+        { text: "Fold to triangle. Pinch right.", shape: 'foxFold1', rot: 3.14, target: {x:0.5, y:0} },
+        { text: "Fold ears. Pinch left.", shape: 'foxFold1', rot: 0, target: {x:-0.5, y:0} },
+        { text: "Draw face. A Fox!", shape: 'foxFinal', rot: 0, target: null }
+    ]}
+};
+
+// --- AUDIO CONTEXT UNLOCK & VOICE UTILITIES ---
+window.__speechBuffer = []; // Prevent Chrome Garbage Collection bug
+let audioUnlocked = false;
+
+function unlockAudioContext() {
+    if (audioUnlocked) return;
+    if ('speechSynthesis' in window) {
+        const u = new SpeechSynthesisUtterance('');
+        u.volume = 0;
+        window.speechSynthesis.speak(u);
+    }
+    audioUnlocked = true;
+}
+
+function voiceSpeak(text) {
+    if('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(text);
+        u.rate = 1.05; // Slightly faster for snappier UI feel
+        window.__speechBuffer.push(u); // Hold reference
+        u.onend = () => {
+            const i = window.__speechBuffer.indexOf(u);
+            if (i > -1) window.__speechBuffer.splice(i, 1);
+        };
+        window.speechSynthesis.speak(u);
+    }
+}
+
+// --- SETUP ---
+function init() {
+    document.getElementById('btn-start').addEventListener('click', async () => {
+        unlockAudioContext(); // CRITICAL FIX: Unlock on explicit user click
+        
+        const btn = document.getElementById('btn-start');
+        btn.innerText = "Accessing Camera...";
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            const video = document.getElementById('video-feed');
+            video.srcObject = stream;
+            
+            video.onloadedmetadata = () => {
+                video.play();
+                inputSystem.start(video);
+                btn.classList.add('active');
+                btn.innerText = "Camera Active! Select a shape.";
+                document.getElementById('error-msg').style.opacity = 0;
+            };
+        } catch (err) {
+            btn.innerText = "Camera Denied. Mouse Mode Active.";
+            setTimeout(() => { btn.classList.add('active'); btn.innerText = "Select a shape (Mouse Mode)"; }, 1500);
+        }
+    });
+
+    document.getElementById('btn-next').addEventListener('click', nextStep);
+    document.getElementById('btn-prev').addEventListener('click', prevStep);
+    document.getElementById('btn-reset').addEventListener('click', resetGame);
+    document.getElementById('btn-home').addEventListener('click', returnToLobby);
+}
+
+// --- INPUT SYSTEM ---
+const inputSystem = {
+    hands: null, cameraUtils: null,
+    start: function(videoElement) {
+        this.hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        this.hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+        this.hands.onResults(this.onResults);
+
+        this.cameraUtils = new Camera(videoElement, {
+            onFrame: async () => { await this.hands.send({image: videoElement}); },
+            width: 640, height: 480
+        });
+        this.cameraUtils.start();
+    },
+    onResults: function(results) {
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            State.handDetected = true;
+            const lm = results.multiHandLandmarks[0];
+            const index = lm[8], thumb = lm[4];
+            
+            const targetX = (1 - index.x) * window.innerWidth;
+            const targetY = index.y * window.innerHeight;
+            
+            State.cursor.x += (targetX - State.cursor.x) * CONFIG.lerpSpeed;
+            State.cursor.y += (targetY - State.cursor.y) * CONFIG.lerpSpeed;
+            updateCursorVisuals();
+
+            const dist = Math.hypot(index.x - thumb.x, index.y - thumb.y);
+            const isPinching = dist < CONFIG.pinchThreshold;
+
+            if (isPinching && !State.isPinching) handleInteraction();
+            
+            State.isPinching = isPinching;
+            document.getElementById('cursor').classList.toggle('pinching', isPinching);
+            document.getElementById('video-feed').classList.toggle('pinching', isPinching);
+        }
+    }
+};
+
+window.addEventListener('mousemove', (e) => {
+    if(!State.handDetected) {
+        State.cursor.x = e.clientX; State.cursor.y = e.clientY; updateCursorVisuals();
+    }
+});
+window.addEventListener('mousedown', () => {
+    document.getElementById('cursor').classList.add('pinching');
+    handleInteraction();
+    setTimeout(() => document.getElementById('cursor').classList.remove('pinching'), 200);
+});
+
+function updateCursorVisuals() {
+    const cursor = document.getElementById('cursor');
+    cursor.style.left = `${State.cursor.x}px`; cursor.style.top = `${State.cursor.y}px`;
+    State.cursor.nx = (State.cursor.x / window.innerWidth) * 2 - 1;
+    State.cursor.ny = -(State.cursor.y / window.innerHeight) * 2 + 1;
+}
+
+function handleInteraction() {
+    if(State.completed) return; // Prevent advancing past end
+    const el = document.elementFromPoint(State.cursor.x, State.cursor.y);
+    if(el && (el.onclick || el.tagName === 'BUTTON')) el.click();
+    if(State.screen === 'STUDIO') checkTargetIntersection();
+}
+
+// --- 3D SCENE & PARTICLES ---
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 100);
+camera.position.z = CONFIG.cameraZ;
+const renderer = new THREE.WebGLRenderer({alpha: true, antialias: true});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+dirLight.position.set(5, 5, 5);
+scene.add(ambientLight, dirLight);
+
+let currentMesh = null;
+let guideMarker = null;
+let particles = null; // Completion visual reward
+
+function createGuideMarker() {
+    const geometry = new THREE.RingGeometry(0.08, 0.14, 32);
+    const material = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true, opacity: 0.9 });
+    guideMarker = new THREE.Mesh(geometry, material);
+    scene.add(guideMarker);
+    guideMarker.visible = false;
+}
+createGuideMarker();
+
+function createPaperMesh(shapeName, color) {
+    if(currentMesh) scene.remove(currentMesh);
+    const geometry = new THREE.ShapeGeometry(GEOMETRY_CACHE[shapeName]);
+    const material = new THREE.MeshStandardMaterial({ color: color, side: THREE.DoubleSide, roughness: 0.4, metalness: 0.1 });
+    currentMesh = new THREE.Mesh(geometry, material);
+    scene.add(currentMesh);
+    currentMesh.scale.set(0,0,0);
+    gsap.to(currentMesh.scale, {x:1, y:1, z:1, duration: 0.6, ease: "back.out(1.7)"});
+}
+
+function triggerConfetti(colorCode) {
+    if(particles) scene.remove(particles);
+    const geometry = new THREE.BufferGeometry();
+    const count = 150;
+    const pos = new Float32Array(count * 3);
+    const velocities = [];
+
+    for(let i=0; i<count*3; i+=3) {
+        pos[i] = (Math.random() - 0.5) * 2; 
+        pos[i+1] = (Math.random() - 0.5) * 2;
+        pos[i+2] = (Math.random() - 0.5) * 2;
+        velocities.push({
+            x: (Math.random() - 0.5) * 0.1,
+            y: (Math.random() + 0.5) * 0.1, // Upward bias
+            z: (Math.random() - 0.5) * 0.1
+        });
+    }
+    geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const material = new THREE.PointsMaterial({ size: 0.1, color: colorCode, transparent: true });
+    particles = new THREE.Points(geometry, material);
+    particles.userData.velocities = velocities;
+    scene.add(particles);
+}
+
+function checkTargetIntersection() {
+    if (!guideMarker.visible) return;
+    const vector = guideMarker.position.clone().project(camera);
+    const dist = Math.hypot(State.cursor.nx - vector.x, State.cursor.ny - vector.y);
+    if (dist < 0.2) {
+        gsap.to(guideMarker.scale, {x: 2, y: 2, duration: 0.2, yoyo: true, repeat: 1});
+        nextStep();
+    }
+}
+
+function animate() {
+    requestAnimationFrame(animate);
+    if(currentMesh) {
+        currentMesh.position.y = Math.sin(Date.now() * 0.001) * 0.1;
+        if(!State.completed) {
+            currentMesh.rotation.x = State.cursor.ny * 0.2 + (currentMesh.userData.baseRotX || 0);
+            currentMesh.rotation.y = State.cursor.nx * 0.2 + (currentMesh.userData.baseRotY || 0);
+        }
+    }
+    if(guideMarker && guideMarker.visible && currentMesh) {
+        guideMarker.position.z = 0.05;
+        guideMarker.rotation.x = currentMesh.rotation.x; guideMarker.rotation.y = currentMesh.rotation.y;
+        const scale = 1 + Math.sin(Date.now() * 0.005) * 0.15;
+        guideMarker.scale.set(scale, scale, 1);
+    }
+    if(particles) {
+        const positions = particles.geometry.attributes.position.array;
+        for(let i=0; i<positions.length/3; i++) {
+            positions[i*3] += particles.userData.velocities[i].x;
+            positions[i*3+1] += particles.userData.velocities[i].y;
+            positions[i*3+2] += particles.userData.velocities[i].z;
+            particles.userData.velocities[i].y -= 0.005; // Gravity
+        }
+        particles.geometry.attributes.position.needsUpdate = true;
+        particles.material.opacity -= 0.005;
+        if(particles.material.opacity <= 0) { scene.remove(particles); particles = null; }
+    }
+    renderer.render(scene, camera);
+}
+animate();
+
+// --- LOGIC ---
+function clearCompletionEffects() {
+    State.completed = false;
+    document.getElementById('step-count').classList.remove('completed');
+    document.getElementById('canvas-container').style.filter = "none";
+    if(particles) { scene.remove(particles); particles = null; }
+}
+
+window.selectShape = function(shape) {
+    State.selectedShape = shape; State.currentStep = 0;
+    
+    document.getElementById('landing-screen').classList.add('hidden');
+    document.getElementById('studio-screen').classList.remove('hidden');
+    
+    if (State.handDetected || document.getElementById('btn-start').classList.contains('active')) {
+        document.getElementById('video-feed').style.display = 'block';
+    }
+
+    State.screen = 'STUDIO';
+    document.querySelectorAll('.shape-card').forEach(c => c.classList.remove('selected'));
+    document.getElementById(`card-${shape}`).classList.add('selected');
+    
+    clearCompletionEffects();
+    updateGameState();
+    voiceSpeak(`Let's fold a ${shape}. Pinch the ring to fold.`);
+};
+
+function updateGameState() {
+    const data = ORIGAMI_DATA[State.selectedShape];
+    const step = data.steps[State.currentStep];
+
+    document.getElementById('step-count').innerText = `STEP ${State.currentStep + 1} OF ${data.steps.length}`;
+    document.getElementById('instruction-text').innerText = step.text;
+
+    createPaperMesh(step.shape, data.color);
+    if(currentMesh) {
+        currentMesh.userData.baseRotX = 0; currentMesh.userData.baseRotY = 0;
+        gsap.to(currentMesh.rotation, {z: step.rot, duration: 1, ease: "power2.out"});
+    }
+    if (step.target) {
+        guideMarker.visible = true; guideMarker.position.set(step.target.x, step.target.y, 0.1);
+    } else guideMarker.visible = false;
+}
+
+function nextStep() {
+    if(State.completed) return;
+    const data = ORIGAMI_DATA[State.selectedShape];
+    const total = data.steps.length;
+    
+    if(State.currentStep < total - 1) {
+        State.currentStep++;
+        updateGameState();
+        // Check if THIS is the final step we just moved to
+        if(State.currentStep === total - 1) {
+            triggerCompletion(data);
+        } else {
+            voiceSpeak("Folding.");
+        }
+    }
+}
+
+function triggerCompletion(data) {
+    State.completed = true;
+    guideMarker.visible = false;
+    
+    const stepCounter = document.getElementById('step-count');
+    stepCounter.innerText = "COMPLETED!";
+    stepCounter.classList.add('completed');
+    document.getElementById('instruction-text').innerText = "Magnificent work. Say 'Home' to return.";
+    
+    // Explicit Audio Output
+    voiceSpeak("Congratulations, you have finished it.");
+    
+    // Visual Reward
+    triggerConfetti(data.color);
+    gsap.killTweensOf(currentMesh.rotation);
+    gsap.to(currentMesh.rotation, {y: Math.PI * 2, duration: 8, repeat: -1, ease: "none"});
+    gsap.to(currentMesh.scale, {x: 1.25, y: 1.25, z: 1.25, duration: 1.5, ease: "elastic.out(1, 0.4)"});
+    
+    const colorHex = '#' + data.color.toString(16).padStart(6, '0');
+    document.getElementById('canvas-container').style.filter = `drop-shadow(0px 0px 30px ${colorHex}66)`;
+}
+
+function prevStep() {
+    if(State.currentStep > 0) {
+        clearCompletionEffects(); State.currentStep--; updateGameState();
+    }
+}
+
+function resetGame() {
+    clearCompletionEffects(); State.currentStep = 0; updateGameState();
+    voiceSpeak("Restarting the paper.");
+}
+
+function returnToLobby() {
+    State.screen = 'LANDING';
+    document.getElementById('studio-screen').classList.add('hidden');
+    document.getElementById('landing-screen').classList.remove('hidden');
+    document.getElementById('video-feed').style.display = 'none';
+    clearCompletionEffects();
+    if(currentMesh) scene.remove(currentMesh);
+    voiceSpeak("Welcome back. Select a shape.");
+}
+
+// --- VOICE RECOGNITION (Fallback Safe) ---
+if ('webkitSpeechRecognition' in window) {
+    const recognition = new webkitSpeechRecognition();
+    recognition.continuous = true; recognition.interimResults = false; recognition.lang = 'en-US';
+    try { recognition.start(); } catch(e) {}
+
+    recognition.onresult = (event) => {
+        const text = event.results[event.results.length - 1][0].transcript.toLowerCase().trim();
+        document.getElementById('voice-log').innerText = `Heard: "${text}"`;
+        
+        if(text.includes('restart') || text.includes('reset') || text.includes('start over')) resetGame();
+        if(text.includes('home') || text.includes('menu') || text.includes('go back')) returnToLobby();
+        if(text.includes('next') || text.includes('forward')) nextStep();
+        if(text.includes('back') && !text.includes('go')) prevStep();
+    };
+    recognition.onend = () => { setTimeout(() => { try { recognition.start(); } catch(e){} }, 1000); };
+}
+
+init();
+</script>
+</body>
+</html>
